@@ -1,0 +1,52 @@
+# The single MongoDB instance of the platform (ADR-011, course norm Annex J J.1.2, J.7, J.8.1).
+# barber-saas-infra-postgres includes this file in the root composition; every MongoDB -db
+# (notifications) migrates its own database into this instance, and every service connects with
+# its own <domain>_app user, never as the administrator.
+services:
+  mongo:
+    image: mongo:7.0.14
+    entrypoint: ["sh", "/mongo/entrypoint.sh"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ADMIN_USER:?set MONGO_ADMIN_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ADMIN_PASSWORD:?set MONGO_ADMIN_PASSWORD}
+      MONGO_REPLICA_KEY: ${MONGO_REPLICA_KEY:?set MONGO_REPLICA_KEY}
+    volumes:
+      - mongo-data:/data/db
+      - ./mongo:/mongo:ro
+    # A single-node replica set: MongoDB transactions need one (idempotency key and notification
+    # in the same transaction, norm 5.3.8). The healthcheck initiates it the first time.
+    healthcheck:
+      test: ["CMD", "sh", "/mongo/healthcheck.sh"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks: [platform]
+
+  # Creates what belongs to the whole instance (the <domain>_app users). Safe to run again: it
+  # creates only what is missing, so an existing volume gets new users on the next up.
+  mongo-init:
+    image: mongo:7.0.14
+    entrypoint: ["sh", "-c", "mongosh \"$$MONGO_URL\" --quiet --file /mongo/01-instance.js"]
+    environment:
+      MONGO_URL: mongodb://${MONGO_ADMIN_USER}:${MONGO_ADMIN_PASSWORD}@mongo:27017/admin?replicaSet=rs0
+      NOTIFICATIONS_APP_PASSWORD: ${NOTIFICATIONS_APP_PASSWORD:-}
+    volumes:
+      - ./mongo:/mongo:ro
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+    networks: [platform]
+
+volumes:
+  mongo-data:
+
+networks:
+  platform:
+    name: platform
+    external: true
