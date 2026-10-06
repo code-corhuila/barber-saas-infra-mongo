@@ -41,6 +41,8 @@ services:
       mongo:
         condition: service_healthy
     restart: "no"
+    # Not started by `up`: migrate.sh (and up.sh alone) runs it once, like the -db runners.
+    profiles: [tooling]
     networks: [platform]
 
 volumes:
